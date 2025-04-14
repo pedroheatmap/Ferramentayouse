@@ -1,0 +1,32 @@
+2025-04-14 11:51:19,554 - WARNING - Filtradas 1 coordenadas inválidas
+2025-04-14 11:51:21,461 - WARNING - Filtradas 29 coordenadas inválidas
+2025-04-14 11:51:21,621 - INFO - 
+🚀 Aplicação pronta! Acesse http://localhost:5000
+2025-04-14 11:51:22,183 - INFO - [31m[1mWARNING: This is a development server. Do not use it in a production deployment. Use a production WSGI server instead.[0m
+ * Running on all addresses (0.0.0.0)
+ * Running on http://127.0.0.1:5000
+ * Running on http://192.168.0.174:5000
+2025-04-14 11:51:22,184 - INFO - [33mPress CTRL+C to quit[0m
+2025-04-14 11:51:27,052 - INFO - 127.0.0.1 - - [14/Apr/2025 11:51:27] "GET / HTTP/1.1" 200 -
+2025-04-14 11:51:27,403 - INFO - 127.0.0.1 - - [14/Apr/2025 11:51:27] "[33mGET /static/logo.png HTTP/1.1[0m" 404 -
+2025-04-14 11:51:27,444 - INFO - 127.0.0.1 - - [14/Apr/2025 11:51:27] "[33mGET /static/logo2.png HTTP/1.1[0m" 404 -
+2025-04-14 11:51:29,569 - INFO - 127.0.0.1 - - [14/Apr/2025 11:51:29] "[33mGET /favicon.ico HTTP/1.1[0m" 404 -
+2025-04-14 11:51:41,722 - INFO - 127.0.0.1 - - [14/Apr/2025 11:51:41] "GET /cobertura?raio=15 HTTP/1.1" 200 -
+2025-04-14 11:52:25,447 - INFO - 127.0.0.1 - - [14/Apr/2025 11:52:25] "GET / HTTP/1.1" 200 -
+2025-04-14 11:52:25,691 - INFO - 127.0.0.1 - - [14/Apr/2025 11:52:25] "[33mGET /static/logo.png HTTP/1.1[0m" 404 -
+2025-04-14 11:52:26,066 - INFO - 127.0.0.1 - - [14/Apr/2025 11:52:26] "[33mGET /static/logo2.png HTTP/1.1[0m" 404 -
+2025-04-14 11:52:30,579 - INFO - 127.0.0.1 - - [14/Apr/2025 11:52:30] "GET /cobertura?raio=15 HTTP/1.1" 200 -
+2025-04-14 11:52:33,889 - INFO - 127.0.0.1 - - [14/Apr/2025 11:52:33] "[33mGET /favicon.ico HTTP/1.1[0m" 404 -
+2025-04-14 13:09:13,665 - INFO - 127.0.0.1 - - [14/Apr/2025 13:09:13] "GET /cobertura?raio=25 HTTP/1.1" 200 -
+2025-04-14 13:09:13,864 - INFO - 127.0.0.1 - - [14/Apr/2025 13:09:13] "GET /cobertura?raio=20 HTTP/1.1" 200 -
+2025-04-14 13:09:13,865 - INFO - 127.0.0.1 - - [14/Apr/2025 13:09:13] "GET /cobertura?raio=30 HTTP/1.1" 200 -
+2025-04-14 13:09:49,764 - INFO - 127.0.0.1 - - [14/Apr/2025 13:09:49] "GET /sugerir_oficinas?raio=30 HTTP/1.1" 200 -
+2025-04-14 14:45:38,622 - WARNING - Filtradas 1 coordenadas inválidas
+2025-04-14 14:45:40,858 - WARNING - Filtradas 29 coordenadas inválidas
+2025-04-14 14:45:41,079 - INFO - 
+🚀 Aplicação pronta! Acesse http://localhost:5000
+2025-04-14 14:45:41,527 - INFO - [31m[1mWARNING: This is a development server. Do not use it in a production deployment. Use a production WSGI server instead.[0m
+ * Running on all addresses (0.0.0.0)
+ * Running on http://127.0.0.1:5000
+ * Running on http://192.168.0.174:5000
+2025-04-14 14:45:41,528 - INFO - [33mPress CTRL+C to quit[0m
