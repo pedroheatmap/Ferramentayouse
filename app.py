@@ -428,7 +428,7 @@ HTML_TEMPLATE = """
             
             <div class="slider-container">
                 <label>Raio de Atendimento (km):</label>
-                <input type="range" min="5" max="300" step="5" value="15" id="raioSlider" class="slider">
+                <input type="range" min="5" max="100" step="5" value="15" id="raioSlider" class="slider">
                 <div class="value-display" id="raio-value">15 km</div>
             </div>
             
@@ -449,7 +449,7 @@ HTML_TEMPLATE = """
                 <h3>💡 Sugestão de Cobertura</h3>
                <div class="slider-container">
                <label>Número de Oficinas Sugeridas:</label>
-               <input type="range" min="50" max="300" step="5" value="10" id="numOficinasSlider" class="slider">
+               <input type="range" min="10" max="300" step="5" value="10" id="numOficinasSlider" class="slider">
                <div class="value-display" id="num-oficinas-value">10</div>
     </div>
                <p>📌 <strong>Oficinas Processadas:</strong> <span id="oficinas-sugeridas">0</span></p>

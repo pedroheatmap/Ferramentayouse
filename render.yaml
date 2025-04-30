@@ -3,7 +3,7 @@ services:
     name: cobertura-oficinas
     env: python
     buildCommand: ""
-    startCommand: python teste_modificado_oficial.py
+    startCommand: gunicorn app:app
     plan: free
     envVars:
       - key: PYTHON_VERSION
