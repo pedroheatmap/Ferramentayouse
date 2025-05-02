@@ -1,8 +1,7 @@
-Flask
-gunicorn
+flask
 pandas
 numpy
 scikit-learn
-openpyxl
 geopy
+openpyxl
 xlsxwriter

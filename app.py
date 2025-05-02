@@ -155,27 +155,27 @@ def calcular_distancia_lote(lote_clientes, oficinas):
     a = np.sin(dlat/2)**2 + np.cos(lote_clientes[:, 0]) * np.cos(oficinas[:, 0][:, np.newaxis]) * np.sin(dlon/2)**2
     return 6371 * 2 * np.arctan2(np.sqrt(a), np.sqrt(1 - a))
 
+
 def calcular_cobertura_otima(clientes_coords, raio_km):
     if len(clientes_coords) == 0:
         return np.array([]), 0
-
-    n_clusters = max(1, min(50, int(len(clientes_coords) / 500)))
-    clientes_coords = np.asarray(clientes_coords, dtype=np.float32)
+    
+    n_clusters = max(1, min(50, int(len(clientes_coords) / 500))) # Limite de 50 clusters
     
     kmeans = KMeans(n_clusters=n_clusters, random_state=42, n_init=20)
     kmeans.fit(clientes_coords)
     centros = kmeans.cluster_centers_
-
+    
     distancias = calcular_distancia_lote(clientes_coords, centros)
     centros_validos = []
-
+    
     for i, centro in enumerate(centros):
-        if not (-33.75 <= centro[0] <= 5.27 and -73.99 <= centro[1] <= -34.79):
+        if not coordenada_no_brasil(centro[0], centro[1]):
             continue
-        clientes_no_raio = np.sum(distancias[i] <= raio_km * 1.2)
-        if clientes_no_raio > 50:
+        clientes_no_raio = np.sum(distancias[i] <= raio_km * 1.2)  # Buffer de 20%
+        if clientes_no_raio > 50:  # Mínimo de 50 clientes
             centros_validos.append(centro)
-
+    
     return np.array(centros_validos), len(centros_validos)
 
 # ========== CARREGAMENTO DE DADOS ==========
@@ -1240,6 +1240,6 @@ if __name__ == '__main__':
     if not os.path.exists('static'):
         os.makedirs('static')
         logging.info("📁 Pasta 'static' criada - Adicione seu logo.png nela")
-
+    
     logging.info("\n🚀 Aplicação pronta! Acesse http://localhost:5000")
-    app.run(host='0.0.0.0', port=5000, debug=False, use_reloader=False)
+    app.run(host='0.0.0.0', port=5000, debug=True, use_reloader=False)
