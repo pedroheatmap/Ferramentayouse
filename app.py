@@ -19,10 +19,65 @@ import gzip
 from functools import lru_cache
 import diskcache as dc
 import hashlib
+from flask_httpauth import HTTPBasicAuth
+from werkzeug.security import generate_password_hash, check_password_hash
+from diskcache import FanoutCache
+from functools import lru_cache
+from diskcache import Cache
 
-# Configuração do cache
+auth = HTTPBasicAuth()
+
+users = {
+    "Car10": generate_password_hash("Car10@2025")  # Substitua por uma senha forte
+}
+
+@auth.verify_password
+def verify_password(username, password):
+    if username in users and check_password_hash(users.get(username), password):
+        return username
+
+# Configuração otimizada para o Render
 CACHE_DIR = Path('cache_data')
-DISK_CACHE = dc.Cache(str(CACHE_DIR))
+DISK_CACHE = FanoutCache(
+    str(CACHE_DIR),
+    shards=4,  # Melhor para concorrência
+    timeout=1,
+    size_limit=3e10,  # ~30GB
+    disk_min_file_size=2**20  # 1MB
+)
+
+# Cache em memória para dados pequenos e frequentes
+MEMORY_CACHE = {}
+
+# Decorator combinado
+def layered_cache(ttl=3600, maxsize=1024):
+    def decorator(func):
+        # Cache em memória (LRU)
+        mem_cached = lru_cache(maxsize=maxsize)(func)
+        
+        # Cache em disco
+        def wrapper(*args, **kwargs):
+            cache_key = f"{func.__module__}_{func.__name__}_{get_cache_key(*args, **kwargs)}"
+            
+            # Tenta memória primeiro
+            if cache_key in MEMORY_CACHE:
+                return MEMORY_CACHE[cache_key]
+                
+            # Tenta disco
+            result = DISK_CACHE.get(cache_key)
+            if result is not None:
+                MEMORY_CACHE[cache_key] = result  # Popula cache memória
+                return result
+                
+            # Executa função
+            result = mem_cached(*args, **kwargs)
+            DISK_CACHE.set(cache_key, result, expire=ttl)
+            MEMORY_CACHE[cache_key] = result
+            return result
+            
+        wrapper.__name__ = func.__name__
+        return wrapper
+    return decorator
 
 def get_cache_key(*args, **kwargs):
     """Gera uma chave única para os parâmetros"""
@@ -308,6 +363,7 @@ except Exception as e:
     print(f"❌ Erro crítico ao carregar dados: {str(e)}")
     logging.error(f"❌ Erro crítico ao carregar dados: {str(e)}", exc_info=True)
     exit()
+
 
 # ========== INTERFACE WEB ==========
 HTML_TEMPLATE = """
@@ -933,7 +989,9 @@ function sugerirOficinas() {
 """
 
 # ========== ROTAS ==========
+
 @app.route('/')
+@auth.login_required
 def index():
     oficinas_json = [{
         'id': idx + 1,
@@ -1266,6 +1324,27 @@ def calcular_clientes_unicos():
         logging.error(f"Erro em /calcular_clientes_unicos: {str(e)}")
         return jsonify({'error': str(e)}), 500
     
+@app.route('/manutencao/limpar_cache')
+@auth.login_required
+def limpar_cache():
+    try:
+        DISK_CACHE.clear()
+        MEMORY_CACHE.clear()
+        return jsonify({'status': 'success', 'message': 'Cache limpo'})
+    except Exception as e:
+        return jsonify({'status': 'error', 'message': str(e)}), 500
+    
+@app.route('/manutencao/status_cache')
+@auth.login_required
+def status_cache():
+    stats = {
+        'disk_cache_size': DISK_CACHE.volume(),
+        'disk_cache_items': DISK_CACHE.stats()['count'],
+        'memory_cache_items': len(MEMORY_CACHE),
+        'cache_dir': str(CACHE_DIR)
+    }
+    return jsonify(stats)
+    
 
 @app.route('/exportar')
 def exportar():
@@ -1328,11 +1407,21 @@ def exportar():
         return jsonify({'error': f"Erro ao exportar: {str(e)}"}), 500
 
 if __name__ == '__main__':
-    # Configurações para produção
     if not os.path.exists('static'):
         os.makedirs('static')
     
-    # Configuração do servidor para produção
-    from waitress import serve
-    logging.info("\n🚀 Aplicação pronta! Acesse http://localhost:5000")
-    serve(app, host='0.0.0.0', port=5000, threads=4)
+    if IS_RENDER:
+        # Configurações otimizadas para produção no Render
+        from waitress import serve
+        logging.info("\n🚀 Aplicação pronta no Render! Acesse https://seu-app.onrender.com")
+        serve(
+            app,
+            host='0.0.0.0',
+            port=int(os.environ.get('PORT', 5000)),
+            threads=8,  # Aumentado para o plano profissional
+            channel_timeout=60,
+            cleanup_interval=30
+        )
+    else:
+        # Configuração local
+        app.run(debug=False, threaded=True)
