@@ -4,7 +4,7 @@ from flask import Flask, render_template_string, request, send_file, jsonify
 from io import BytesIO
 from datetime import datetime
 from geopy.geocoders import Nominatim
-from sklearn.cluster import KMeans
+from sklearn.cluster import KMeans, DBSCAN
 from sklearn.neighbors import KDTree
 import time
 import warnings
@@ -15,7 +15,7 @@ import sys
 import io
 import json
 from pathlib import Path
-from sklearn.cluster import DBSCAN, KMeans
+import gzip
 
 # Configuração para lidar com Unicode no Windows
 if sys.platform == "win32":
@@ -46,38 +46,90 @@ pd.set_option('display.float_format', '{:.6f}'.format)
 
 app = Flask(__name__, static_folder='static')
 
-# ========== CONFIGURAÇÕES ==========
+# ========== CONFIGURAÇÕES OTIMIZADAS ==========
 RAIOS_KM = list(range(5, 101, 5))
 CACHE_FILE = Path('geocode_cache.json')
-LOTE_CLIENTES = 20000  # Reduzido para evitar estouro de memória
-MAX_CLIENTES_MAP = 5000
+LOTE_CLIENTES = 10000  # Reduzido para otimizar memória
+MAX_CLIENTES_MAP = 3000  # Reduzido para o heatmap
 GEOPY_TIMEOUT = 10
 GEOPY_DELAY = 1
+MEMORY_OPTIMIZED = True  # Ativar otimizações de memória
 
 # ========== FUNÇÕES AUXILIARES ==========
-
+def load_data_csv(filename, dtype=None):
+    """Carrega dados de CSV com tratamento robusto de tipos e encoding"""
+    try:
+        # Lista de codificações a tentar (em ordem de preferência)
+        encodings = ['utf-8', 'latin1', 'iso-8859-1', 'cp1252']
+        
+        # Verifica se existe versão compactada (prioridade)
+        gz_file = f"{filename}.gz"
+        if os.path.exists(gz_file):
+            for encoding in encodings:
+                try:
+                    with gzip.open(gz_file, 'rt', encoding=encoding) as f:
+                        df = pd.read_csv(f, sep=';', decimal=',')
+                        # Conversão segura para float32
+                        for col in ['Latitude', 'Longitude']:
+                            if col in df.columns:
+                                df[col] = pd.to_numeric(df[col].astype(str).str.replace(',', '.'), 
+                                                     errors='coerce').astype('float32')
+                        return df
+                except (UnicodeDecodeError, pd.errors.ParserError):
+                    continue
+            raise UnicodeDecodeError("Nenhuma codificação funcionou para o arquivo compactado")
+        elif os.path.exists(filename):
+            for encoding in encodings:
+                try:
+                    df = pd.read_csv(filename, sep=';', decimal=',', encoding=encoding)
+                    # Conversão segura para float32
+                    for col in ['Latitude', 'Longitude']:
+                        if col in df.columns:
+                            df[col] = pd.to_numeric(df[col].astype(str).str.replace(',', '.'), 
+                                                 errors='coerce').astype('float32')
+                    return df
+                except (UnicodeDecodeError, pd.errors.ParserError):
+                    continue
+            raise UnicodeDecodeError("Nenhuma codificação funcionou para o arquivo")
+        else:
+            raise FileNotFoundError(f"Arquivo {filename} não encontrado")
+    except Exception as e:
+        logging.error(f"Erro ao carregar {filename}: {str(e)}")
+        raise
+    
 def get_clientes():
     if not hasattr(app, 'clientes_df'):
-        app.clientes_df = pd.read_excel("clientes.xlsx", engine='openpyxl')
+        # Usar tipos otimizados para memória
+        dtype = {
+            'Latitude': 'float32',
+            'Longitude': 'float32'
+        }
+        app.clientes_df = load_data_csv("clientes.csv", dtype=dtype)
         app.clientes_df = converter_coordenadas(app.clientes_df)
+        
+        if MEMORY_OPTIMIZED:
+            # Manter apenas colunas essenciais
+            keep_cols = ['Latitude', 'Longitude']
+            app.clientes_df = app.clientes_df[keep_cols].copy()
+            
     return app.clientes_df
-
 
 def load_cache():
     if CACHE_FILE.exists():
-        with open(CACHE_FILE, 'r', encoding='utf-8') as f:
-            return json.load(f)
+        try:
+            with open(CACHE_FILE, 'r', encoding='utf-8') as f:
+                return json.load(f)
+        except Exception as e:
+            logging.warning(f"Erro ao carregar cache: {str(e)} - Criando novo cache")
+            return {}
     return {}
 
 def save_cache(cache):
     try:
         with open(CACHE_FILE, 'w', encoding='utf-8') as f:
-            json.dump(cache, f, ensure_ascii=False)
-    except PermissionError:
-        alt_path = os.path.join(os.path.expanduser('~'), 'geocode_cache.json')
-        with open(alt_path, 'w', encoding='utf-8') as f:
-            json.dump(cache, f, ensure_ascii=False)
-        logging.warning(f"Cache salvo em local alternativo: {alt_path}")
+            json.dump(cache, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        logging.warning(f"Erro ao salvar cache: {str(e)}")
 
 CACHE_CIDADES = load_cache()
 
@@ -88,27 +140,33 @@ def coordenada_no_brasil(lat, lon):
 
 def converter_coordenadas(df):
     df = df.copy()
-    
+
     for col in ['Latitude', 'Longitude']:
         if col not in df.columns:
             raise ValueError(f"Coluna obrigatória '{col}' não encontrada")
-    
-    df['Latitude'] = pd.to_numeric(df['Latitude'], errors='coerce')
-    df['Longitude'] = pd.to_numeric(df['Longitude'], errors='coerce')
-    
+
+        # Garante que é string, substitui vírgula por ponto e converte para numérico
+        df[col] = pd.to_numeric(
+            df[col].astype(str).str.replace(',', '.').str.strip(),
+            errors='coerce'
+        )
+
+    # Remove linhas com valores nulos
     df = df.dropna(subset=['Latitude', 'Longitude'])
+    
+    # Filtra coordenadas válidas e dentro do Brasil
     valid_coords = df[
-        (df['Latitude'].between(-90, 90)) & 
+        (df['Latitude'].between(-90, 90)) &
         (df['Longitude'].between(-180, 180)) &
         df.apply(lambda x: coordenada_no_brasil(x['Latitude'], x['Longitude']), axis=1)
     ]
-    
+
     if len(valid_coords) == 0:
         raise ValueError("Nenhuma coordenada válida encontrada após filtragem")
-    
+
     if len(df) != len(valid_coords):
         logging.warning(f"Filtradas {len(df) - len(valid_coords)} coordenadas inválidas")
-    
+
     return valid_coords
 
 def get_cidade(lat, lon):
@@ -179,37 +237,25 @@ def calcular_cobertura_otima(clientes_coords, raio_km):
     return np.array(centros_validos), len(centros_validos)
 
 # ========== CARREGAMENTO DE DADOS ==========
+
 print("⏳ Iniciando carregamento de dados...")
 try:
-    if not os.path.exists('oficinas.xlsx'):
-        raise FileNotFoundError("Arquivo 'oficinas.xlsx' não encontrado")
-    if not os.path.exists('clientes.xlsx'):
-        raise FileNotFoundError("Arquivo 'clientes.xlsx' não encontrado")
-    
-    oficinas_df_raw = pd.read_excel("oficinas.xlsx", engine='openpyxl')
-    clientes_df_raw = pd.read_excel("clientes.xlsx", engine='openpyxl')
-    
-    oficinas_df = converter_coordenadas(oficinas_df_raw)
-    clientes_df = converter_coordenadas(clientes_df_raw)
+    # Carregar dados com tratamento robusto
+    oficinas_df = converter_coordenadas(load_data_csv("oficinas.csv"))
+    clientes_df = converter_coordenadas(load_data_csv("clientes.csv"))
     
     if len(oficinas_df) == 0 or len(clientes_df) == 0:
         raise ValueError("Dados insuficientes após filtragem")
     
+    # Converter para arrays numpy com tipos otimizados
     coords_oficinas = oficinas_df[['Latitude', 'Longitude']].values.astype(np.float32)
     coords_clientes = clientes_df[['Latitude', 'Longitude']].values.astype(np.float32)
     
-    oficinas_df.reset_index(drop=True, inplace=True)
-    clientes_df.reset_index(drop=True, inplace=True)
-    
     print(f"✅ Dados carregados: {len(oficinas_df)} oficinas e {len(clientes_df):,} clientes válidos")
-    print("\n📌 Amostra de oficinas:")
-    print(oficinas_df[['Nome', 'Latitude', 'Longitude']].head(3))
-    print("\n📌 Amostra de clientes:")
-    print(clientes_df[['Latitude', 'Longitude']].head(3))
-
+    
 except Exception as e:
     print(f"❌ Erro crítico ao carregar dados: {str(e)}")
-    logging.error(f"❌ Erro crítico ao carregar dados: {str(e)}")
+    logging.error(f"❌ Erro crítico ao carregar dados: {str(e)}", exc_info=True)
     exit()
 
 # ========== INTERFACE WEB ==========
@@ -853,15 +899,19 @@ def index():
 
 @app.route('/cobertura')
 def obter_cobertura():
-    clientes_df = get_clientes()  # Carrega apenas quando necessário
     try:
-        raio = int(request.args.get('raio'))
+        raio = int(request.args.get('raio', 15))
+        if raio <= 0:
+            raise ValueError("Raio deve ser positivo")
+            
         clientes_cobertos = 0
         clientes_por_oficina = np.zeros(len(oficinas_df), dtype=np.int32)
         
-        # Processar em lotes
-        for i in range(0, len(coords_clientes), LOTE_CLIENTES):
-            lote = coords_clientes[i:i+LOTE_CLIENTES]
+        # Processar em lotes menores para evitar estouro de memória
+        lote_size = min(LOTE_CLIENTES, 20000)
+        
+        for i in range(0, len(coords_clientes), lote_size):
+            lote = coords_clientes[i:i+lote_size]
             distancias = calcular_distancia_lote(lote, coords_oficinas)
             
             if distancias.size == 0:
@@ -877,7 +927,7 @@ def obter_cobertura():
         # Preparar resposta
         ativas = []
         for idx, row in oficinas_df.iterrows():
-            if idx < len(clientes_por_oficina):
+            if idx < len(clientes_por_oficina) and clientes_por_oficina[idx] > 0:
                 ativas.append({
                     'id': idx + 1,
                     'nome': row.get('Nome', f'Oficina {idx+1}'),
@@ -1164,82 +1214,67 @@ def exportar():
     try:
         raio = int(request.args.get('raio'))
         clientes_cobertos = 0
-        # Garantir que o array tem o mesmo número de elementos que as oficinas
         clientes_por_oficina = np.zeros(len(oficinas_df), dtype=np.int32)
         
-        # Processar em lotes menores para evitar problemas de memória
-        LOTE = min(LOTE_CLIENTES, 50000)  # Reduzir o tamanho do lote se necessário
+        # Processar em lotes menores para otimizar memória
+        LOTE = min(LOTE_CLIENTES, 20000)
         
         for i in range(0, len(coords_clientes), LOTE):
             lote_clientes = coords_clientes[i:i+LOTE]
-            
-            # Calcular distâncias para todas as oficinas
             distancias = calcular_distancia_lote(lote_clientes, coords_oficinas)
             
-            # Clientes cobertos por pelo menos uma oficina
+            if distancias.size == 0:
+                continue
+                
             clientes_cobertos += np.sum(np.any(distancias <= raio, axis=1))
-            
-            # Clientes por oficina (somar ao longo do eixo 0 - clientes)
-            # Garantir que estamos somando apenas as colunas correspondentes às oficinas
-            soma_lote = np.sum(distancias <= raio, axis=0)
-            
-            # Verificar compatibilidade de dimensões antes de somar
-            if len(soma_lote) == len(clientes_por_oficina):
-                clientes_por_oficina += soma_lote
-            else:
-                # Se houver incompatibilidade, usar o mínimo de elementos
-                min_len = min(len(soma_lote), len(clientes_por_oficina))
-                clientes_por_oficina[:min_len] += soma_lote[:min_len]
+            clientes_por_oficina += np.sum(distancias <= raio, axis=0)
         
-        # Preparar dados para exportação
+        # Preparar dados para exportação CSV
         df_oficinas = oficinas_df.copy()
         df_oficinas['Clientes_Cobertos'] = clientes_por_oficina
         
-        # Adicionar coluna de cidade (com cache)
-        print("Obtendo cidades para as oficinas...")
-        df_oficinas['Cidade'] = df_oficinas.apply(
-            lambda x: get_cidade(x['Latitude'], x['Longitude']), axis=1)
-        
-        # Ordenar por clientes cobertos
-        df_oficinas = df_oficinas.sort_values('Clientes_Cobertos', ascending=False)
-        
-        # Criar relatório Excel
-        print("Criando arquivo Excel...")
+        # Gerar CSV em memória
         output = BytesIO()
-        with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-            # Sheet de oficinas
-            df_oficinas.to_excel(writer, sheet_name='Oficinas', index=False)
-            
-            # Sheet de métricas
-            pd.DataFrame({
-                'Métrica': ['Total Clientes', 'Clientes Cobertos', '% Cobertura', 
-                           'Oficinas Ativas', 'Raio (km)', 'Data da Análise'],
-                'Valor': [
-                    len(clientes_df),
-                    int(clientes_cobertos),
-                    f"{(clientes_cobertos/len(clientes_df))*100:.1f}%",
-                    len(oficinas_df),
-                    raio,
-                    datetime.now().strftime('%d/%m/%Y %H:%M')
-                ]
-            }).to_excel(writer, sheet_name='Métricas', index=False)
+        
+        # Escrever métricas como primeiro CSV
+        metricas = pd.DataFrame({
+            'Métrica': ['Total Clientes', 'Clientes Cobertos', '% Cobertura', 
+                       'Oficinas Ativas', 'Raio (km)', 'Data da Análise'],
+            'Valor': [
+                len(clientes_df),
+                int(clientes_cobertos),
+                f"{(clientes_cobertos/len(clientes_df))*100:.1f}%",
+                len(oficinas_df),
+                raio,
+                datetime.now().strftime('%d/%m/%Y %H:%M')
+            ]
+        })
+        
+        # Compactar os dados para economizar memória
+        with gzip.GzipFile(fileobj=output, mode='wb') as gz:
+            metricas.to_csv(gz, index=False, encoding='utf-8')
+            gz.write(b'\n\n')  # Separador
+            df_oficinas.to_csv(gz, index=False, encoding='utf-8')
         
         output.seek(0)
+        
         return send_file(
             output,
-            mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            mimetype='application/gzip',
             as_attachment=True,
-            download_name=f"cobertura_oficinas_{raio}km_{datetime.now().strftime('%Y%m%d')}.xlsx"
+            download_name=f"cobertura_oficinas_{raio}km_{datetime.now().strftime('%Y%m%d')}.csv.gz"
         )
     
     except Exception as e:
         logging.error(f"Erro em /exportar: {str(e)}", exc_info=True)
         return jsonify({'error': f"Erro ao exportar: {str(e)}"}), 500
-    
+
 if __name__ == '__main__':
+    # Configurações para produção
     if not os.path.exists('static'):
         os.makedirs('static')
-        logging.info("📁 Pasta 'static' criada - Adicione seu logo.png nela")
     
+    # Configuração do servidor para produção
+    from waitress import serve
     logging.info("\n🚀 Aplicação pronta! Acesse http://localhost:5000")
-    app.run(host='0.0.0.0', port=5000, debug=True, use_reloader=False)
+    serve(app, host='0.0.0.0', port=5000, threads=4)
