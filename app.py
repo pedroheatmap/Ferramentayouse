@@ -1413,7 +1413,7 @@ if __name__ == '__main__':
     if IS_RENDER:
         # Configurações otimizadas para produção no Render
         from waitress import serve
-        logging.info("\n🚀 Aplicação pronta no Render! Acesse https://seu-app.onrender.com")
+        logging.info("\n🚀 Aplicação pronta no Render! Acesse https://ferramentayouse-c59v.onrender.com")
         serve(
             app,
             host='0.0.0.0',
