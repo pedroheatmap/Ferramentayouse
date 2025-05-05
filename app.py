@@ -24,6 +24,9 @@ from werkzeug.security import generate_password_hash, check_password_hash
 from diskcache import FanoutCache
 from functools import lru_cache
 from diskcache import Cache
+import psutil
+import os
+
 
 auth = HTTPBasicAuth()
 
@@ -52,13 +55,12 @@ MEMORY_CACHE = {}
 # Decorator combinado
 def layered_cache(ttl=3600, maxsize=1024):
     def decorator(func):
-        # Cache em memória (LRU)
         mem_cached = lru_cache(maxsize=maxsize)(func)
         
         # Cache em disco
         def wrapper(*args, **kwargs):
             cache_key = f"{func.__module__}_{func.__name__}_{get_cache_key(*args, **kwargs)}"
-            
+                        
             # Tenta memória primeiro
             if cache_key in MEMORY_CACHE:
                 return MEMORY_CACHE[cache_key]
@@ -1007,33 +1009,31 @@ def index():
     )
 
 @app.route('/cobertura')
-@cache_to_disk(ttl=432000)  # Cache por 10 minutos
+@cache_to_disk(ttl=432000)
 def obter_cobertura():
     try:
         raio = int(request.args.get('raio', 15))
         if raio <= 0:
             raise ValueError("Raio deve ser positivo")
-            
-        # Adicionar timeout
-        start_time = time.time()
-        timeout = 29  # Segundos (menos que o timeout do Gunicorn)
-        
+
+        # Reduzir o lote para evitar estouro de memória
+        LOTE = 2000  # Reduzido para 2.000 clientes por vez
+
         clientes_cobertos = 0
         clientes_por_oficina = np.zeros(len(oficinas_df), dtype=np.int32)
-        
-        for i in range(0, len(coords_clientes), LOTE_CLIENTES):
-            if time.time() - start_time > timeout:
-                raise TimeoutError("Processamento excedeu o tempo limite")
-                
-            lote = coords_clientes[i:i+LOTE_CLIENTES]
+
+        for i in range(0, len(coords_clientes), LOTE):
+            lote = coords_clientes[i:i+LOTE]
             distancias = calcular_distancia_lote(lote, coords_oficinas)
             
             if distancias.size == 0:
                 continue
-                
+
+            # Liberar memória explicitamente
             clientes_cobertos += np.sum(np.any(distancias <= raio, axis=0))
             clientes_por_oficina += np.sum(distancias <= raio, axis=1)
-            
+            del distancias  # Forçar liberação de memória
+
             # Clientes por oficina (dentro do raio)
             clientes_por_oficina += np.sum(distancias <= raio, axis=1)
         
@@ -1059,6 +1059,13 @@ def obter_cobertura():
         logging.error(f"Erro em /cobertura: {str(e)}", exc_info=True)
         return jsonify({'error': str(e)}), 500
     
+
+@app.before_request
+def log_memory():
+    process = psutil.Process(os.getpid())
+    mem_mb = process.memory_info().rss / 1024 / 1024
+    logging.info(f"Uso de memória atual: {mem_mb:.2f} MB")
+
 @app.route('/calcular_clientes_beneficiados', methods=['POST'])
 def calcular_clientes_beneficiados():
     try:
