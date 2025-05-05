@@ -40,10 +40,10 @@ def verify_password(username, password):
 CACHE_DIR = Path('cache_data')
 DISK_CACHE = FanoutCache(
     str(CACHE_DIR),
-    shards=4,  # Melhor para concorrência
+    shards=4,
     timeout=1,
-    size_limit=3e10,  # ~30GB
-    disk_min_file_size=2**20  # 1MB
+    size_limit=1e9,  # Reduzido para 1GB
+    disk_min_file_size=2**21  
 )
 
 # Cache em memória para dados pequenos e frequentes
@@ -141,7 +141,7 @@ app = Flask(__name__, static_folder='static')
 # ========== CONFIGURAÇÕES OTIMIZADAS ==========
 RAIOS_KM = list(range(5, 101, 5))
 CACHE_FILE = Path('geocode_cache.json')
-LOTE_CLIENTES = 10000  # Reduzido para otimizar memória
+LOTE_CLIENTES = 5000 # Reduzido para otimizar memória
 MAX_CLIENTES_MAP = 3000  # Reduzido para o heatmap
 GEOPY_TIMEOUT = 10
 GEOPY_DELAY = 1
