@@ -199,19 +199,31 @@ def get_cidade(lat, lon):
     return CACHE_CIDADES[chave]
 
 def calcular_distancia_lote(lote_clientes, oficinas):
+    # Verificar tamanhos dos arrays primeiro
+    if len(lote_clientes) == 0 or len(oficinas) == 0:
+        return np.array([])
+    
+    # Converter para radianos em chunks
     lote_clientes = np.radians(np.asarray(lote_clientes, dtype=np.float32))
     oficinas = np.radians(np.asarray(oficinas, dtype=np.float32))
-
-    if lote_clientes.ndim == 1:
-        lote_clientes = lote_clientes.reshape(1, -1)
-    if oficinas.ndim == 1:
-        oficinas = oficinas.reshape(1, -1)
-
-    dlat = oficinas[:, 0][:, np.newaxis] - lote_clientes[:, 0]
-    dlon = oficinas[:, 1][:, np.newaxis] - lote_clientes[:, 1]
-
-    a = np.sin(dlat/2)**2 + np.cos(lote_clientes[:, 0]) * np.cos(oficinas[:, 0][:, np.newaxis]) * np.sin(dlon/2)**2
-    return 6371 * 2 * np.arctan2(np.sqrt(a), np.sqrt(1 - a))
+    
+    # Dividir cálculo em partes menores
+    try:
+        dlat = oficinas[:, 0][:, np.newaxis] - lote_clientes[:, 0]
+        dlon = oficinas[:, 1][:, np.newaxis] - lote_clientes[:, 1]
+        
+        a = np.sin(dlat/2)**2 + np.cos(lote_clientes[:, 0]) * np.cos(oficinas[:, 0][:, np.newaxis]) * np.sin(dlon/2)**2
+        return 6371 * 2 * np.arctan2(np.sqrt(a), np.sqrt(1 - a))
+    except MemoryError:
+        # Se falhar, calcular em pedaços menores
+        distancias = []
+        for i in range(0, len(oficinas), 100):  # Processar 100 oficinas por vez
+            ofc = oficinas[i:i+100]
+            dlat = ofc[:, 0][:, np.newaxis] - lote_clientes[:, 0]
+            dlon = ofc[:, 1][:, np.newaxis] - lote_clientes[:, 1]
+            a_part = np.sin(dlat/2)**2 + np.cos(lote_clientes[:, 0]) * np.cos(ofc[:, 0][:, np.newaxis]) * np.sin(dlon/2)**2
+            distancias.append(6371 * 2 * np.arctan2(np.sqrt(a_part), np.sqrt(1 - a_part)))
+        return np.hstack(distancias)
 
 
 def calcular_cobertura_otima(clientes_coords, raio_km):
@@ -904,22 +916,25 @@ def obter_cobertura():
         if raio <= 0:
             raise ValueError("Raio deve ser positivo")
             
+        # Adicionar timeout
+        start_time = time.time()
+        timeout = 29  # Segundos (menos que o timeout do Gunicorn)
+        
         clientes_cobertos = 0
         clientes_por_oficina = np.zeros(len(oficinas_df), dtype=np.int32)
         
-        # Processar em lotes menores para evitar estouro de memória
-        lote_size = min(LOTE_CLIENTES, 20000)
-        
-        for i in range(0, len(coords_clientes), lote_size):
-            lote = coords_clientes[i:i+lote_size]
+        for i in range(0, len(coords_clientes), LOTE_CLIENTES):
+            if time.time() - start_time > timeout:
+                raise TimeoutError("Processamento excedeu o tempo limite")
+                
+            lote = coords_clientes[i:i+LOTE_CLIENTES]
             distancias = calcular_distancia_lote(lote, coords_oficinas)
             
             if distancias.size == 0:
                 continue
                 
-            # Clientes cobertos por pelo menos uma oficina
-            cobertura_clientes = np.any(distancias <= raio, axis=0)
-            clientes_cobertos += np.sum(cobertura_clientes)
+            clientes_cobertos += np.sum(np.any(distancias <= raio, axis=0))
+            clientes_por_oficina += np.sum(distancias <= raio, axis=1)
             
             # Clientes por oficina (dentro do raio)
             clientes_por_oficina += np.sum(distancias <= raio, axis=1)
@@ -1217,7 +1232,7 @@ def exportar():
         clientes_por_oficina = np.zeros(len(oficinas_df), dtype=np.int32)
         
         # Processar em lotes menores para otimizar memória
-        LOTE = min(LOTE_CLIENTES, 20000)
+        LOTE = min(LOTE_CLIENTES, 10000)
         
         for i in range(0, len(coords_clientes), LOTE):
             lote_clientes = coords_clientes[i:i+LOTE]
