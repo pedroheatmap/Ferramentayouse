@@ -16,6 +16,43 @@ import io
 import json
 from pathlib import Path
 import gzip
+from functools import lru_cache
+import diskcache as dc
+import hashlib
+
+# Configuração do cache
+CACHE_DIR = Path('cache_data')
+DISK_CACHE = dc.Cache(str(CACHE_DIR))
+
+def get_cache_key(*args, **kwargs):
+    """Gera uma chave única para os parâmetros"""
+    key = hashlib.md5()
+    for arg in args:
+        key.update(str(arg).encode())
+    for k, v in sorted(kwargs.items()):
+        key.update(f"{k}={v}".encode())
+    return key.hexdigest()
+
+def cache_to_disk(ttl=432000):
+    """Decorator para cache em disco com tempo de vida"""
+    def decorator(func):
+        def wrapper(*args, **kwargs):
+            cache_key = f"{func.__module__}_{func.__name__}_{get_cache_key(*args, **kwargs)}"
+            
+            # Tenta obter do cache
+            result = DISK_CACHE.get(cache_key)
+            if result is not None:
+                return result
+                
+            # Executa a função se não estiver em cache
+            result = func(*args, **kwargs)
+            DISK_CACHE.set(cache_key, result, expire=ttl)
+            return result
+        
+        # Preserva o nome original da função para o Flask
+        wrapper.__name__ = func.__name__
+        return wrapper
+    return decorator
 
 # Configuração para lidar com Unicode no Windows
 if sys.platform == "win32":
@@ -198,6 +235,7 @@ def get_cidade(lat, lon):
         save_cache(CACHE_CIDADES)
     return CACHE_CIDADES[chave]
 
+@cache_to_disk(ttl=432000)
 def calcular_distancia_lote(lote_clientes, oficinas):
     # Verificar tamanhos dos arrays primeiro
     if len(lote_clientes) == 0 or len(oficinas) == 0:
@@ -251,6 +289,7 @@ def calcular_cobertura_otima(clientes_coords, raio_km):
 # ========== CARREGAMENTO DE DADOS ==========
 
 print("⏳ Iniciando carregamento de dados...")
+
 try:
     # Carregar dados com tratamento robusto
     oficinas_df = converter_coordenadas(load_data_csv("oficinas.csv"))
@@ -910,6 +949,7 @@ def index():
     )
 
 @app.route('/cobertura')
+@cache_to_disk(ttl=432000)  # Cache por 10 minutos
 def obter_cobertura():
     try:
         raio = int(request.args.get('raio', 15))
@@ -1015,6 +1055,7 @@ def calcular_clientes_beneficiados():
         }), 500
 
 @app.route('/sugerir_oficinas')
+@cache_to_disk(ttl=432000)  # Cache por 30 minutos
 def sugerir_oficinas():
     try:
         raio = int(request.args.get('raio'))
@@ -1093,7 +1134,9 @@ def sugerir_oficinas():
         return jsonify({'error': str(e)}), 500
 
 @app.route('/clientes_heatmap')
+@cache_to_disk(ttl=432000)  # Cache por 30 minutos
 def clientes_heatmap():
+
     try:
         sample_size = min(10000, len(clientes_df))
         clientes_sample = clientes_df.sample(sample_size) if len(clientes_df) > sample_size else clientes_df
