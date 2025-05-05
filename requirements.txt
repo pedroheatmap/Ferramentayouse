@@ -3,5 +3,5 @@ pandas
 numpy
 scikit-learn
 geopy
-openpyxl
-xlsxwriter
+waitress
+gunicorn
